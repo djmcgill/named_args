@@ -1,0 +1,11 @@
+[package]
+name = "my_macro"
+version = "0.1.0"
+authors = ["David McGillicuddy <contact@djmcgill.co.uk>"]
+edition = "2018"
+
+[lib]
+name = "my_macro"
+proc-macro = true
+
+[dependencies]
