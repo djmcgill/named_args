@@ -3,6 +3,7 @@ name = "named_args"
 version = "0.1.0"
 authors = ["David McGillicuddy <contact@djmcgill.co.uk>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
 
 [dependencies.my_macro]
 path = "./my_macro"
