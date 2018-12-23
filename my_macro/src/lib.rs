@@ -1,115 +1,119 @@
 extern crate proc_macro;
-use proc_macro::*;
-use std::iter::FromIterator;
+
+use proc_macro2::{self, Ident, Span};
+use quote::quote;
+
+use syn::*;
+use syn::punctuated::Punctuated;
+use syn::token::*;
 
 #[proc_macro_attribute]
-pub fn named_args(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut item_iter = item.into_iter();
-    let name = item_iter.nth(1).unwrap(); // FIXME: should instead seek until a "fn" is found
-    let args = item_iter.next().unwrap(); // FIXME: should work with generics
-    let body = item_iter.next().unwrap(); // FIXME: should work with "where" type qualifiers
+pub fn named_args(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input: proc_macro2::TokenStream = item.into();
+    let item_fn = syn::parse2::<syn::ItemFn>(input).unwrap();
+    let args = item_fn.decl.inputs.clone();
 
-    // we need to group like this because of stuff like "ref a: &i32, b: u32"
-    let grouped_args = match args {
-        TokenTree::Group(group) => split_by_comma(group.stream()),
-        other => panic!("Expected to find the function arguments here, instead found {:?}", other),
-    };
+    let arg_struct_name = Ident::new(&format!("Args_{}", item_fn.ident), Span::call_site());
 
-    // Construct the struct's members
-    let struct_arg_bodies_vec: Vec<TokenTree> = vec![
-        Ident::new("a", Span::call_site()).into(), // FIXME: parse this properly from grouped_args
-        Punct::new(':', Spacing::Alone).into(),
-        Ident::new("i32", Span::call_site()).into(), // FIXME: consider refs and lifetimes :scream:
-        Punct::new(',', Spacing::Alone).into(),
-        Ident::new("b", Span::call_site()).into(),
-        Punct::new(':', Spacing::Alone).into(),
-        Ident::new("u32", Span::call_site()).into(),
-    ];
-    let struct_arg_bodies = TokenStream::from_iter(struct_arg_bodies_vec.into_iter());
+    let mut named_item_fn = item_fn.clone();
+    named_item_fn.ident = Ident::new(&format!("{}_named", item_fn.ident), Span::call_site());
+    let mut named_arg: Punctuated<FnArg, Comma> = Punctuated::new();
 
-    // Construct the _new_ argument to the function
-    let param_arg_bodies_vec: Vec<TokenTree> = vec![
-        Ident::new("args", Span::call_site()).into(),
-        Punct::new(':', Spacing::Alone).into(),
-        Ident::new("Args", Span::call_site()).into(),
-    ];
-    let param_arg_bodies = TokenStream::from_iter(param_arg_bodies_vec.into_iter());
-
-    // Construct the returned syntax: a struct definition and then the transformed function
-    let return_item_vec: Vec<TokenTree> = vec![
-        Ident::new("struct", Span::call_site()).into(),
-        Ident::new("Args", Span::call_site()).into(),
-        Group::new(Delimiter::Brace, struct_arg_bodies).into(),
-        Ident::new("fn", Span::call_site()).into(),
-        name,
-        Group::new(Delimiter::Parenthesis, param_arg_bodies).into(),
-    ];
-    let mut return_item = TokenStream::from_iter(return_item_vec.into_iter());
-
-    // FIXME: inject "let Args { <stuff> } = args;" into function body
-    let new_body: TokenStream = insert_arg_debinding(&grouped_args, body).into();
-
-    return_item.extend(new_body);
-    return_item.extend(TokenStream::from_iter(item_iter));
-    return_item
-}
-
-fn insert_arg_debinding(args: &Vec<Vec<TokenTree>>, body: TokenTree) -> TokenTree {
-    let body_stream = match body {
-        TokenTree::Group(ref group) if group.delimiter() == Delimiter::Brace => group.stream(),
-        other => panic!("Expected the fn body's group, instead found {:?}", other),
-    };
-
-    // let arg_names_vec: Vec<TokenTree> = args.as_slice().map(|arg_vec| arg_vec[0].clone());
-    // FIXME: convert `args` to just get the names
-    let arg_names_vec: Vec<TokenTree> = vec![
-        Ident::new("a", Span::call_site()).into(),
-        Punct::new(',', Spacing::Alone).into(),
-        Ident::new("b", Span::call_site()).into(),
-    ];
-    let arg_names = TokenStream::from_iter(arg_names_vec.into_iter());
-
-    let mut body_vec: Vec<TokenTree> = vec![
-        Ident::new("let", Span::call_site()).into(),
-        Ident::new("Args", Span::call_site()).into(),
-        Group::new(Delimiter::Brace, arg_names).into(),
-        Punct::new('=', Spacing::Alone).into(),
-        Ident::new("args", Span::call_site()).into(),
-        Punct::new(';', Spacing::Alone).into(),
-    ];
-    let mut body = TokenStream::from_iter(body_vec.into_iter());
-
-    body.extend(body_stream);
-    Group::new(Delimiter::Brace, body).into()
-}
-
-// Turns the stream "a b c , d e f , g h"
-// into [["a", "b", "c"], ["d", "e", "f"], ["g", "h"]]
-fn split_by_comma(stream: TokenStream) -> Vec<Vec<TokenTree>> {
-    let mut iter = stream.into_iter();
-
-    let mut groups = vec![];
-    let mut current_group = vec![];
-    loop {
-        match iter.next() {
-            Some(TokenTree::Punct(ref next_punct)) if next_punct.as_char() == ',' => {
-                let mut temp_group = vec![];
-                temp_group.append(&mut current_group);
-                groups.insert(groups.len(), temp_group);
-            },
-
-
-            Some(next_non_punct) => {
-                current_group.insert(current_group.len(), next_non_punct)
-            }
-            None => {
-                if !current_group.is_empty() {
-                    groups.insert(groups.len(), current_group);
+    let mut named_item_fn_args: Punctuated<Expr, Comma> = Punctuated::new();
+    for arg in args.iter() {
+        match arg {
+            FnArg::Captured(ArgCaptured{pat, ..}) => {
+                match pat {
+                    Pat::Ident(PatIdent{ident, ..}) => {
+                        named_item_fn_args.push(
+                            Expr::Path(ExprPath{
+                                path: path_of_one(ident.clone()),
+                                qself: None,
+                                attrs: vec![],
+                            })
+                        );
+                    },
+                    _ => panic!("Pattern type other than Ident not supported"),
                 }
-                break; // nll ftw
             },
+            _ => panic!("Arg type other than Captured not supported"),
         }
     }
 
-    groups
+
+    named_item_fn.block = Box::new(Block {
+        brace_token: Brace::default(),
+        stmts: vec!(Stmt::Expr(Expr::Call(ExprCall{
+            attrs: vec![],
+            paren_token: Paren::default(),
+            func: Box::new(Expr::Path(ExprPath{
+                path: path_of_one(item_fn.ident.clone()),
+                qself: None,
+                attrs: vec![],
+            })),
+            args: named_item_fn_args,
+        }))),
+    });
+
+    let mut named_arg_fields: Punctuated<FieldPat, Comma> = Punctuated::new();
+    for arg in args.iter() {
+        match arg {
+            FnArg::Captured(ArgCaptured{pat, ..}) => {
+                match pat {
+                    Pat::Ident(PatIdent{ident, ..}) => {
+                        named_arg_fields.push(
+                            FieldPat {
+                                attrs: vec![],
+                                member: Member::Named(ident.clone()),
+                                colon_token: None,
+                                pat: Box::new(Pat::Ident(PatIdent {
+                                    by_ref: None,
+                                    mutability: None,
+                                    ident: ident.clone(),
+                                    subpat: None,
+                                }))
+                            }
+                        );
+                    },
+                    _ => panic!("Pattern type other than Ident not supported"),
+                }
+            },
+            _ => panic!("Arg type other than Captured not supported"),
+        }
+    }
+
+    named_arg.push(FnArg::Captured(ArgCaptured {
+        pat: Pat::Struct(PatStruct {
+            path: path_of_one(arg_struct_name.clone()),
+            brace_token: Brace::default(),
+            fields: named_arg_fields,
+            dot2_token: None,
+        }),
+        colon_token: Colon::default(),
+        ty: Type::Path(TypePath {
+            qself: None,
+            path: path_of_one(arg_struct_name.clone())
+        }),
+    }));
+    named_item_fn.decl.inputs = named_arg;
+
+    let output: proc_macro2::TokenStream = quote! {
+        struct #arg_struct_name { #args }
+
+        #item_fn
+        #named_item_fn
+    };
+    output.into()
+}
+
+fn path_of_one(ident: Ident) -> Path {
+    let mut path_ident: Punctuated<PathSegment, Colon2> = Punctuated::new();
+    path_ident.push(PathSegment{
+        ident,
+        arguments: PathArguments::None,
+    });
+    Path {
+        leading_colon: None,
+        segments: path_ident,
+    }
 }
