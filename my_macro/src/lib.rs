@@ -1,11 +1,90 @@
 extern crate proc_macro;
+extern crate proc_macro_hack;
 
 use proc_macro2::{self, Ident, Span};
+use proc_macro_hack::proc_macro_hack;
 use quote::quote;
 
 use syn::*;
+use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::{Brace, Comma, Colon, Colon2, Paren};
+
+struct NamedExprCall {
+    func: Ident, // FIXME: this should be Box<Expr> because not all functions are just an Ident
+    paren_token: Paren,
+    args: Punctuated<NamedField, Comma>,
+}
+impl Parse for NamedExprCall {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let content;
+        Ok(NamedExprCall {
+            func: input.parse::<Ident>()?,
+            paren_token: parenthesized!(content in input),
+            args: content.parse_terminated(NamedField::parse)?,
+        })
+    }
+}
+impl NamedExprCall {
+    fn to_named_call(self) -> Expr {
+        let NamedExprCall { func, paren_token, args} = self;
+        let mut arg_struct_expr_fields: Punctuated<FieldValue, Comma> = Punctuated::new();
+        for NamedField{ name, colon_token, expr } in args {
+            arg_struct_expr_fields.push(FieldValue{
+                attrs: vec![],
+                member: Member::Named(name),
+                colon_token: Some(colon_token),
+                expr,
+            })
+        }
+
+        let arg_struct_expr = Expr::Struct(ExprStruct{
+            attrs: vec![],
+            path: path_of_one(Ident::new(&format!("Args_{}", func), Span::call_site())),
+            brace_token: Brace::default(),
+            fields: arg_struct_expr_fields,
+            dot2_token: None,
+            rest: None
+        });
+        let mut expr_args: Punctuated<Expr, Comma> = Punctuated::new();
+        expr_args.push(arg_struct_expr);
+
+        Expr::Call(ExprCall {
+            attrs: vec![],
+            func: Box::new(Expr::Path(ExprPath{
+                attrs: vec![],
+                qself: None,
+                path: path_of_one(Ident::new(&format!("{}_named", func), Span::call_site())),
+            })),
+            paren_token,
+            args: expr_args,
+        })
+    }
+}
+struct NamedField {
+    name: Ident,
+    colon_token: Colon,
+    expr: Expr,
+}
+impl Parse for NamedField {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(NamedField {
+            name: input.parse()?,
+            colon_token: input.parse()?,
+            expr: input.parse()?,
+        })
+    }
+}
+
+#[proc_macro_hack]
+pub fn named_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let fn_call = syn::parse::<NamedExprCall>(input.clone()).unwrap();
+    let named_fn_call = fn_call.to_named_call();
+    let output: proc_macro2::TokenStream = quote! {
+        #named_fn_call
+    };
+    output.into()
+}
 
 #[proc_macro_attribute]
 pub fn named_args(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
