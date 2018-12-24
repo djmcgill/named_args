@@ -2,10 +2,10 @@ extern crate my_macro;
 extern crate proc_macro_hack;
 
 use proc_macro_hack::proc_macro_hack;
-use my_macro::named_args;
 
 #[proc_macro_hack]
-pub use my_macro::named_impl as named;
+pub use my_macro::named as named;
+pub use my_macro::named_args;
 
 #[named_args]
 fn foo(a: i32, b: u32, c: String) {
