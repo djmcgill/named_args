@@ -9,5 +9,5 @@ fn foo(a: i32, b: u32, c: String) {
 }
 
 pub fn main() {
-    foo_named(Args_foo{a: -3, b: 4, c: "".to_string()});
+    foo_named(Args_foo{a: -3, b: 4, c: "s".to_string()});
 }

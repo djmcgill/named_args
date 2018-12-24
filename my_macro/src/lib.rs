@@ -5,7 +5,7 @@ use quote::quote;
 
 use syn::*;
 use syn::punctuated::Punctuated;
-use syn::token::*;
+use syn::token::{Brace, Comma, Colon, Colon2, Paren};
 
 #[proc_macro_attribute]
 pub fn named_args(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
